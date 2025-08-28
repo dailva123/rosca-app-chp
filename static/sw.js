@@ -1,9 +1,9 @@
-const CACHE_NAME = "rosca-app-v4"; // ⚠️ aumente a versão sempre que atualizar
+const CACHE_NAME = "rosca-app-v5"; // ⚠️ aumente a versão sempre que atualizar
 const urlsToCache = [
   "/",
   "/static/index.html",
-  "/static/exemplo_roscas.png",  // imagem exemplo
-  "/static/fototeste.png",       // foto teste
+  "/static/exemplo_roscas.png",
+  "/static/fototeste.png",
   "/static/icon-192.png",
   "/static/icon-512.png",
   "/static/manifest.json"
@@ -41,26 +41,32 @@ self.addEventListener("activate", event => {
 
 // Estratégia de cache: Offline First
 self.addEventListener("fetch", event => {
+  if (event.request.method !== "GET") return;
+
   event.respondWith(
     caches.match(event.request).then(response => {
       if (response) {
-        return response; // retorna do cache
+        console.log("[SW] Recurso carregado do cache:", event.request.url);
+        return response;
       }
-      // busca na rede e salva no cache
+      console.log("[SW] Recurso não está no cache, buscando na rede:", event.request.url);
+
       return fetch(event.request).then(fetchResponse => {
         return caches.open(CACHE_NAME).then(cache => {
-          if (event.request.method === "GET") {
-            cache.put(event.request, fetchResponse.clone());
-          }
+          cache.put(event.request, fetchResponse.clone());
           return fetchResponse;
         });
       }).catch(() => {
-        // fallback se offline e recurso não estiver no cache
+        console.warn("[SW] Offline! Retornando fallback para:", event.request.url);
+
         if (event.request.destination === "document") {
           return caches.match("/static/index.html");
         }
         if (event.request.destination === "image") {
           return caches.match("/static/offline.png") || caches.match("/static/icon-192.png");
+        }
+        if (event.request.destination === "style" || event.request.destination === "script") {
+          return new Response("", { headers: { "Content-Type": "text/plain" } });
         }
       });
     })
