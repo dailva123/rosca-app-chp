@@ -1,0 +1,5 @@
+train: synthetic_dataset/images
+val: synthetic_dataset/images
+
+nc: 3
+names: ["cartao", "rosca_externa", "rosca_interna"]

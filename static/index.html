@@ -18,62 +18,65 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 30px;
-      background: #f9f9f9;
+      margin: 15px;
+      background: #f4f6f9;
     }
     h2 {
       color: #333;
       text-align: center;
     }
     .container {
-      max-width: 700px;
+      max-width: 750px;
       margin: auto;
       background: #fff;
       padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 12px;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.12);
     }
     .instrucoes {
-      text-align: left;
       margin-bottom: 20px;
     }
     .instrucoes ol {
       margin-left: 20px;
-    }
-    .preview {
-      margin-top: 20px;
-      text-align: center;
-    }
-    .preview img {
-      max-width: 100%;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      margin-top: 10px;
+      line-height: 1.6;
     }
     .tipo-rosca {
       margin-top: 15px;
       font-size: 15px;
     }
+    input[type="file"] {
+      margin-top: 15px;
+      display: block;
+      width: 100%;
+    }
     button {
       margin-top: 15px;
-      padding: 12px 20px;
+      padding: 12px;
       border: none;
-      border-radius: 5px;
+      border-radius: 6px;
       background: #007bff;
       color: white;
       font-size: 16px;
       width: 100%;
       cursor: pointer;
+      transition: 0.2s;
     }
     button:hover {
       background: #0056b3;
     }
     .resultado {
       margin-top: 20px;
-      padding: 12px;
-      background: #eef;
-      border: 1px solid #99c;
-      border-radius: 5px;
+      padding: 14px;
+      background: #eef5ff;
+      border: 1px solid #aac;
+      border-radius: 6px;
+      font-size: 15px;
+    }
+    .resultado img {
+      margin-top: 12px;
+      max-width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 8px;
     }
     .loading {
       margin-top: 15px;
@@ -81,11 +84,21 @@
       font-size: 15px;
       color: #555;
     }
+    .preview {
+      margin-top: 20px;
+      text-align: center;
+    }
+    .preview img {
+      max-width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin-top: 10px;
+    }
     footer {
-      margin-top: 30px;
+      margin-top: 25px;
       text-align: center;
       font-size: 14px;
-      color: #555;
+      color: #666;
     }
     footer a {
       color: #007bff;
@@ -99,18 +112,18 @@
 </head>
 <body>
   <div class="container">
-    <h2>Identificação Automática de Roscas</h2>
+    <h2>🔧 Identificação Automática de Roscas</h2>
 
     <!-- Lista de instruções -->
     <div class="instrucoes">
-      <p>Siga as instruções abaixo para tirar a foto corretamente:</p>
+      <p><strong>Como tirar a foto corretamente:</strong></p>
       <ol>
-        <li>Coloque a rosca sobre uma superfície clara (preferência fundo branco).</li>
-        <li>Posicione um cartão de crédito ao lado da rosca, encostado.</li>
-        <li>Mantenha cartão e rosca alinhados horizontalmente.</li>
+        <li>Coloque a rosca sobre fundo claro (ideal: branco).</li>
+        <li>Posicione um cartão de crédito ao lado da rosca.</li>
+        <li>Cartão e rosca devem estar alinhados horizontalmente.</li>
         <li>Tire a foto de cima, sem inclinar o celular.</li>
-        <li>Centralize a rosca e deixe o cartão inteiro visível.</li>
-        <li>Evite sombras, use iluminação natural ou boa luz.</li>
+        <li>Centralize a rosca e deixe o cartão visível por completo.</li>
+        <li>Evite sombras (use luz natural ou iluminação forte).</li>
       </ol>
     </div>
 
@@ -130,25 +143,25 @@
     <div id="loading" class="loading" style="display:none;">⏳ Processando imagem, aguarde...</div>
 
     <!-- Resultado -->
-    <div id="resposta" class="resultado"></div>
+    <div id="resposta" class="resultado" style="display:none;"></div>
 
     <!-- Exemplo de Roscas -->
     <div class="preview">
       <h3>Exemplo de Roscas:</h3>
-      <img src="/static/exemplo_roscas.png" alt="Exemplo de Rosca Interna (Fêmea) e Externa (Macho)">
+      <img src="/static/exemplo_roscas.png" alt="Exemplo de Rosca Interna e Externa">
     </div>
 
     <!-- Exemplo de Foto Correta -->
     <div class="preview">
       <h3>Exemplo de Foto Correta:</h3>
-      <img src="/static/fototeste.png" alt="Exemplo de Foto Correta com Rosca Interna Fêmea e Rosca Externa Macho">
+      <img src="/static/fototeste.png" alt="Foto correta com cartão de referência">
     </div>
   </div>
 
   <!-- Rodapé -->
   <footer>
-    <a href="/static/termos.html" target="_blank">📜 Termos de Uso</a> | 
-    <a href="/static/privacidade.html" target="_blank">🔒 Política de Privacidade</a>
+    <a href="/termos" target="_blank">📜 Termos de Uso</a> | 
+    <a href="/privacidade" target="_blank">🔒 Política de Privacidade</a>
   </footer>
 
   <script>
@@ -165,7 +178,7 @@
       const arquivo = input.files[0];
       const extensoesPermitidas = ["image/png", "image/jpeg"];
       if (!extensoesPermitidas.includes(arquivo.type)) {
-        alert("Formato inválido! Por favor, envie apenas imagens PNG ou JPG.");
+        alert("Formato inválido! Use apenas PNG ou JPG.");
         input.value = "";
         return;
       }
@@ -176,6 +189,7 @@
       formData.append("interna", tipo);
 
       try {
+        resposta.style.display = "none";
         resposta.innerHTML = "";
         loading.style.display = "block";
 
@@ -191,18 +205,21 @@
           throw new Error(data.erro || "Erro ao analisar a foto");
         }
 
+        resposta.style.display = "block";
         resposta.innerHTML = `
-          <h3>📊 Resultado da Análise:</h3>
-          <strong>🔧 Tipo de rosca:</strong> ${data.tipo_rosca || "-"} <br>
-          <strong>📏 Diâmetro (mm):</strong> ${data.diametro_medido_mm || "-"} <br>
-          <strong>📌 Bitola:</strong> ${data.bitola || "-"} <br>
-          <strong>📖 Norma:</strong> ${data.norma || "-"} <br>
-          <strong>✅ Confiança:</strong> ${data.confianca || "-"} <br>
-          <strong>💡 Observações:</strong> ${data.observacao || data.erro}
+          <h3>📊 Resultado da Análise</h3>
+          <p><strong>🔧 Tipo de rosca:</strong> ${data.tipo_rosca || "-"} </p>
+          <p><strong>📏 Diâmetro (mm):</strong> ${data.diametro_medido_mm || "-"} </p>
+          <p><strong>📌 Bitola:</strong> ${data.bitola || "-"} </p>
+          <p><strong>📖 Norma:</strong> ${data.norma || "-"} </p>
+          <p><strong>✅ Confiança:</strong> ${data.confianca || "-"} </p>
+          <p><strong>💡 Observações:</strong> ${data.observacao || data.erro}</p>
+          ${data.debug ? `<h4>🔍 Visualização:</h4><img src="${data.debug}" alt="Imagem processada">` : ""}
         `;
       } catch (error) {
         loading.style.display = "none";
-        resposta.innerText = "Erro: " + error.message;
+        resposta.style.display = "block";
+        resposta.innerHTML = `<p style="color:red;"><strong>Erro:</strong> ${error.message}</p>`;
       }
     }
   </script>

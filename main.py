@@ -2,10 +2,17 @@ import os
 import cv2
 import numpy as np
 import tempfile
+import logging
 from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
+
+# ================================
+# Configuração de logging
+# ================================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ================================
 # Inicialização do FastAPI
@@ -18,7 +25,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ================================
 # Modelo YOLOv8 (Lazy Load)
 # ================================
-model = None  # só será carregado na 1ª requisição
+MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "runs/detect/train9/weights/best.pt")
+model = None
+NAMES = {}
 
 # Dimensão real do cartão ISO/IEC 7810 ID-1
 CARTAO_LARGURA_MM = 85.6
@@ -42,8 +51,17 @@ TABELA_ROSCAS = {
 }
 
 # ================================
-# Função de decisão
+# Funções utilitárias
 # ================================
+def load_model():
+    global model, NAMES
+    if model is None:
+        logger.info(f"🔄 Carregando modelo YOLOv8: {MODEL_PATH}")
+        model = YOLO(MODEL_PATH)
+        NAMES = model.names
+        logger.info(f"✅ Modelo carregado com {len(NAMES)} classes: {NAMES}")
+    return model
+
 def fator_decisao(diametro_medido: float, interna: bool):
     tipo = "interna" if interna else "externa"
     candidatos = []
@@ -60,51 +78,54 @@ def fator_decisao(diametro_medido: float, interna: bool):
 # Função principal: medir com YOLO
 # ================================
 def medir_diametro_yolo(imagem_path, interna: bool):
-    global model
-    if model is None:
-        model = YOLO("yolov8n.pt")  # carrega apenas na 1ª vez
-
+    mdl = load_model()
     img = cv2.imread(imagem_path)
     if img is None:
+        logger.error("❌ Falha ao carregar imagem.")
         return -1, None
 
-    # Redimensionar para acelerar
+    # Redimensionar (max 800px)
     scale_factor = 800 / max(img.shape[:2])
     img = cv2.resize(img, (int(img.shape[1] * scale_factor), int(img.shape[0] * scale_factor)))
 
-    # Rodar YOLO
-    results = model(img, verbose=False)[0]
+    results = mdl(img, verbose=False)[0]
 
     cartao_px = None
     rosca_px = None
 
     for box in results.boxes:
         cls_id = int(box.cls[0])
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
-        largura = x2 - x1
-        altura = y2 - y1
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+        largura, altura = x2 - x1, y2 - y1
+        label = NAMES.get(cls_id, str(cls_id))
 
-        # ⚠️ IMPORTANTE: ajuste IDs conforme seu dataset custom
-        if cls_id == 0:  # supomos "cartao"
+        logger.info(f"📦 Detectado: {label} ({cls_id}) - {largura:.1f}x{altura:.1f}px")
+
+        if label.lower() == "cartao":
             cartao_px = max(largura, altura)
-            cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
-        elif cls_id == 1:  # supomos "rosca"
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(img, "Cartao", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        elif label.lower() == "rosca":
             rosca_px = max(largura, altura)
-            cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(img, "Rosca", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    # Salvar imagem debug
-    debug_path = os.path.join("static", "debug_output.png")
+    # Nome único para debug
+    debug_filename = f"debug_{next(tempfile._get_candidate_names())}.png"
+    debug_path = os.path.join("static", debug_filename)
     cv2.imwrite(debug_path, img)
 
     if not cartao_px or not rosca_px:
+        logger.warning("⚠️ Não encontrou cartao ou rosca na imagem.")
         return -1, debug_path
 
     escala = CARTAO_LARGURA_MM / cartao_px
     diametro_mm = rosca_px * escala
+    logger.info(f"📏 Diametro calculado: {diametro_mm:.2f} mm")
     return diametro_mm, debug_path
 
 # ================================
-# Endpoint: Home (HTML principal)
+# Rotas FastAPI
 # ================================
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -118,16 +139,13 @@ def termos():
 def privacidade():
     return FileResponse("static/privacidade.html")
 
-# ================================
-# Endpoint de análise
-# ================================
 @app.post("/analisar")
 async def analisar(file: UploadFile = File(None), interna: str = Form(None)):
     try:
         if file is None:
             return JSONResponse(content={"erro": "📷 Por favor, selecione uma foto."}, status_code=400)
-        if interna is None:
-            return JSONResponse(content={"erro": "🔧 Informe se a rosca é interna ou externa."}, status_code=400)
+
+        is_interna = str(interna).strip().lower() in ["true", "1", "yes"]
 
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in [".png", ".jpg", ".jpeg"]:
@@ -137,33 +155,34 @@ async def analisar(file: UploadFile = File(None), interna: str = Form(None)):
             tmp.write(await file.read())
             temp_path = tmp.name
 
-        diametro_medido, debug_path = medir_diametro_yolo(temp_path, interna.lower() == "true")
+        diametro_medido, debug_path = medir_diametro_yolo(temp_path, is_interna)
 
         if diametro_medido <= 0:
             return JSONResponse(content={
                 "erro": "❌ Não foi possível identificar a rosca/cartão.",
-                "debug": "/static/debug_output.png"
+                "debug": f"/{debug_path}"
             }, status_code=400)
 
-        norma, bitola, diametro_ref, confianca, tipo = fator_decisao(diametro_medido, interna.lower() == "true")
+        norma, bitola, diametro_ref, confianca, tipo = fator_decisao(diametro_medido, is_interna)
 
         if not norma:
             return JSONResponse(content={
                 "erro": "⚠️ Medida não corresponde a norma conhecida.",
                 "diametro_medido_mm": f"{diametro_medido:.2f}",
-                "debug": "/static/debug_output.png"
+                "debug": f"/{debug_path}"
             }, status_code=400)
 
         return JSONResponse(content={
             "status": "ok",
-            "tipo_rosca": "Rosca interna (fêmea)" if interna.lower() == "true" else "Rosca externa (macho)",
+            "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
             "diametro_medido_mm": f"{diametro_medido:.2f}",
             "bitola": bitola,
             "norma": norma,
             "confianca": f"{confianca:.1f}%",
             "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
-            "debug": "/static/debug_output.png"
+            "debug": f"/{debug_path}"
         })
 
     except Exception as e:
+        logger.exception("💥 Erro inesperado no endpoint /analisar")
         return JSONResponse(content={"erro": f"💥 Erro inesperado: {str(e)}"}, status_code=500)
