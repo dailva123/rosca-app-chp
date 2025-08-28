@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Identificação de Rosca</title>
+
+  <!-- Manifest (PWA) -->
+  <link rel="manifest" href="/static/manifest.json">
+
+  <!-- Ícones -->
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
+
+  <!-- Cor da barra do navegador -->
+  <meta name="theme-color" content="#007bff">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 30px;
+      background: #f9f9f9;
+    }
+    h2 {
+      color: #333;
+      text-align: center;
+    }
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .instrucoes {
+      text-align: left;
+      margin-bottom: 20px;
+    }
+    .instrucoes ol {
+      margin-left: 20px;
+    }
+    .preview {
+      margin-top: 20px;
+      text-align: center;
+    }
+    .preview img {
+      max-width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+    .tipo-rosca {
+      margin-top: 15px;
+      font-size: 15px;
+    }
+    button {
+      margin-top: 15px;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 5px;
+      background: #007bff;
+      color: white;
+      font-size: 16px;
+      width: 100%;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .resultado {
+      margin-top: 20px;
+      padding: 12px;
+      background: #eef;
+      border: 1px solid #99c;
+      border-radius: 5px;
+    }
+    .loading {
+      margin-top: 15px;
+      text-align: center;
+      font-size: 15px;
+      color: #555;
+    }
+    footer {
+      margin-top: 30px;
+      text-align: center;
+      font-size: 14px;
+      color: #555;
+    }
+    footer a {
+      color: #007bff;
+      text-decoration: none;
+      margin: 0 8px;
+    }
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Identificação Automática de Roscas</h2>
+
+    <!-- Lista de instruções -->
+    <div class="instrucoes">
+      <p>Siga as instruções abaixo para tirar a foto corretamente:</p>
+      <ol>
+        <li>Coloque a rosca sobre uma superfície clara (preferência fundo branco).</li>
+        <li>Posicione um cartão de crédito ao lado da rosca, encostado.</li>
+        <li>Mantenha cartão e rosca alinhados horizontalmente.</li>
+        <li>Tire a foto de cima, sem inclinar o celular.</li>
+        <li>Centralize a rosca e deixe o cartão inteiro visível.</li>
+        <li>Evite sombras, use iluminação natural ou boa luz.</li>
+      </ol>
+    </div>
+
+    <!-- Input para abrir a câmera -->
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+
+    <!-- Escolher tipo de rosca -->
+    <div class="tipo-rosca">
+      <label><input type="radio" name="tipo" value="true"> Rosca Interna (fêmea)</label><br>
+      <label><input type="radio" name="tipo" value="false" checked> Rosca Externa (macho)</label>
+    </div>
+
+    <!-- Botão de Análise -->
+    <button onclick="enviarFoto()">📏 Analisar Diâmetro</button>
+
+    <!-- Loader -->
+    <div id="loading" class="loading" style="display:none;">⏳ Processando imagem, aguarde...</div>
+
+    <!-- Resultado -->
+    <div id="resposta" class="resultado"></div>
+
+    <!-- Exemplo de Roscas -->
+    <div class="preview">
+      <h3>Exemplo de Roscas:</h3>
+      <img src="/static/exemplo_roscas.png" alt="Exemplo de Rosca Interna (Fêmea) e Externa (Macho)">
+    </div>
+
+    <!-- Exemplo de Foto Correta -->
+    <div class="preview">
+      <h3>Exemplo de Foto Correta:</h3>
+      <img src="/static/fototeste.png" alt="Exemplo de Foto Correta com Rosca Interna Fêmea e Rosca Externa Macho">
+    </div>
+  </div>
+
+  <!-- Rodapé -->
+  <footer>
+    <a href="/static/termos.html" target="_blank">📜 Termos de Uso</a> | 
+    <a href="/static/privacidade.html" target="_blank">🔒 Política de Privacidade</a>
+  </footer>
+
+  <script>
+    async function enviarFoto() {
+      const input = document.getElementById("cameraInput");
+      const resposta = document.getElementById("resposta");
+      const loading = document.getElementById("loading");
+
+      if (!input.files.length) {
+        alert("Selecione uma foto primeiro!");
+        return;
+      }
+
+      const arquivo = input.files[0];
+      const extensoesPermitidas = ["image/png", "image/jpeg"];
+      if (!extensoesPermitidas.includes(arquivo.type)) {
+        alert("Formato inválido! Por favor, envie apenas imagens PNG ou JPG.");
+        input.value = "";
+        return;
+      }
+
+      const tipo = document.querySelector('input[name="tipo"]:checked').value;
+      const formData = new FormData();
+      formData.append("file", arquivo);
+      formData.append("interna", tipo);
+
+      try {
+        resposta.innerHTML = "";
+        loading.style.display = "block";
+
+        const response = await fetch("/analisar", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        loading.style.display = "none";
+
+        if (!response.ok) {
+          throw new Error(data.erro || "Erro ao analisar a foto");
+        }
+
+        resposta.innerHTML = `
+          <h3>📊 Resultado da Análise:</h3>
+          <strong>🔧 Tipo de rosca:</strong> ${data.tipo_rosca || "-"} <br>
+          <strong>📏 Diâmetro (mm):</strong> ${data.diametro_medido_mm || "-"} <br>
+          <strong>📌 Bitola:</strong> ${data.bitola || "-"} <br>
+          <strong>📖 Norma:</strong> ${data.norma || "-"} <br>
+          <strong>✅ Confiança:</strong> ${data.confianca || "-"} <br>
+          <strong>💡 Observações:</strong> ${data.observacao || data.erro}
+        `;
+      } catch (error) {
+        loading.style.display = "none";
+        resposta.innerText = "Erro: " + error.message;
+      }
+    }
+  </script>
+</body>
+</html>
