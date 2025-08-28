@@ -128,7 +128,7 @@
     </div>
 
     <!-- Input para abrir a câmera -->
-    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" onchange="mostrarPreview()">
 
     <!-- Escolher tipo de rosca -->
     <div class="tipo-rosca">
@@ -144,6 +144,12 @@
 
     <!-- Resultado -->
     <div id="resposta" class="resultado" style="display:none;"></div>
+
+    <!-- Preview da foto tirada -->
+    <div class="preview" id="fotoPreview" style="display:none;">
+      <h3>📷 Sua Foto:</h3>
+      <img id="imgPreview" alt="Pré-visualização da foto">
+    </div>
 
     <!-- Exemplo de Roscas -->
     <div class="preview">
@@ -165,6 +171,25 @@
   </footer>
 
   <script>
+    // Mostra preview da foto selecionada
+    function mostrarPreview() {
+      const input = document.getElementById("cameraInput");
+      const preview = document.getElementById("fotoPreview");
+      const img = document.getElementById("imgPreview");
+
+      if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          img.src = e.target.result;
+          preview.style.display = "block";
+        }
+        reader.readAsDataURL(input.files[0]);
+      } else {
+        preview.style.display = "none";
+      }
+    }
+
+    // Envia a foto para análise
     async function enviarFoto() {
       const input = document.getElementById("cameraInput");
       const resposta = document.getElementById("resposta");
