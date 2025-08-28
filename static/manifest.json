@@ -3,6 +3,7 @@
   "name": "Identificação de Rosca",
   "short_name": "RoscaID",
   "description": "Aplicativo PWA para identificar e medir roscas automaticamente usando IA.",
+  "lang": "pt-BR",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -23,5 +24,6 @@
       "purpose": "any maskable"
     }
   ],
+  "categories": ["utilities", "productivity", "business"],
   "prefer_related_applications": false
 }
