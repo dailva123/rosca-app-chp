@@ -25,7 +25,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ================================
 # Modelo YOLOv8 (Lazy Load)
 # ================================
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "runs/detect/train9/weights/best.pt")
+# Agora pega o modelo na raiz do projeto (para funcionar no Render também)
+MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
 model = None
 NAMES = {}
 
