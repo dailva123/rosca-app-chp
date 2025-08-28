@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware  # 🔑 IMPORTANTE
 from ultralytics import YOLO
 
 # ================================
@@ -19,14 +20,22 @@ logger = logging.getLogger(__name__)
 # ================================
 app = FastAPI()
 
+# 🚀 CORS liberado para o front funcionar no Render
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # pode restringir depois se quiser
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Servir arquivos estáticos
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ================================
 # Modelo YOLOv8 (Lazy Load)
 # ================================
-# Agora pega o modelo na raiz do projeto (para funcionar no Render também)
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
+MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")  # Arquivo deve estar no repositório raiz
 model = None
 NAMES = {}
 
