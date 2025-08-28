@@ -16,11 +16,9 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ================================
-# Carregar modelo YOLOv8 (Nano)
+# Modelo YOLOv8 (Lazy Load)
 # ================================
-# ⚠️ Recomendo treinar modelo customizado com classes ["cartao", "rosca"]
-# Por enquanto, pode usar "yolov8n.pt" e ajustar as classes
-model = YOLO("yolov8n.pt")
+model = None  # só será carregado na 1ª requisição
 
 # Dimensão real do cartão ISO/IEC 7810 ID-1
 CARTAO_LARGURA_MM = 85.6
@@ -62,6 +60,10 @@ def fator_decisao(diametro_medido: float, interna: bool):
 # Função principal: medir com YOLO
 # ================================
 def medir_diametro_yolo(imagem_path, interna: bool):
+    global model
+    if model is None:
+        model = YOLO("yolov8n.pt")  # carrega apenas na 1ª vez
+
     img = cv2.imread(imagem_path)
     if img is None:
         return -1, None
