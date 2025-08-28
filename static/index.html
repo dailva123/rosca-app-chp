@@ -218,7 +218,8 @@
         resposta.innerHTML = "";
         loading.style.display = "block";
 
-        const response = await fetch("/analisar", {
+        // 🔥 Corrigido: usa sempre o domínio atual
+        const response = await fetch(window.location.origin + "/analisar", {
           method: "POST",
           body: formData
         });
