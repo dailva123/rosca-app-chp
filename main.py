@@ -66,6 +66,8 @@ TABELA_ROSCAS = {
 def load_model():
     global model, NAMES
     if model is None:
+        if not os.path.exists(MODEL_PATH):
+            logger.error(f"❌ Modelo não encontrado em {MODEL_PATH}")
         logger.info(f"🔄 Carregando modelo YOLOv8: {MODEL_PATH}")
         model = YOLO(MODEL_PATH)
         NAMES = model.names
@@ -152,14 +154,14 @@ def privacidade():
     return FileResponse("static/privacidade.html")
 
 @app.post("/analisar")
-async def analisar(file: UploadFile = File(None), interna: str = Form(None)):
+async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
     try:
-        if file is None:
-            return JSONResponse(content={"erro": "📷 Por favor, selecione uma foto."}, status_code=400)
+        if not file:
+            return JSONResponse(content={"erro": "📷 Nenhum arquivo recebido."}, status_code=400)
 
-        is_interna = str(interna).strip().lower() in ["true", "1", "yes"]
+        is_interna = interna.strip().lower() in ["true", "1", "yes"]
 
-        ext = os.path.splitext(file.filename)[1].lower()
+        ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in [".png", ".jpg", ".jpeg"]:
             ext = ".png"
 
