@@ -200,3 +200,10 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
     except Exception as e:
         logger.exception("💥 Erro inesperado no endpoint /analisar")
         return JSONResponse(content={"erro": f"💥 Erro inesperado: {str(e)}"}, status_code=500)
+
+# ================================
+# Health Check para Render
+# ================================
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
