@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware  # 🔑 IMPORTANTE
+from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 
 # ================================
@@ -107,15 +107,17 @@ def medir_diametro_yolo(imagem_path, interna: bool):
         cls_id = int(box.cls[0])
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
         largura, altura = x2 - x1, y2 - y1
-        label = NAMES.get(cls_id, str(cls_id))
+        label = NAMES.get(cls_id, str(cls_id)).lower()
 
         logger.info(f"📦 Detectado: {label} ({cls_id}) - {largura:.1f}x{altura:.1f}px")
 
-        if label.lower() == "cartao":
+        # 🔑 Aceita diferentes nomes para as classes
+        if label in ["cartao", "card"]:
             cartao_px = max(largura, altura)
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(img, "Cartao", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        elif label.lower() == "rosca":
+            cv2.putText(img, "Cartão", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+        elif label in ["rosca", "thread", "screw"]:
             rosca_px = max(largura, altura)
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(img, "Rosca", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
