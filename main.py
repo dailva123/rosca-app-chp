@@ -23,7 +23,7 @@ app = FastAPI()
 # 🚀 CORS liberado para o front funcionar no Render
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # pode restringir depois se quiser
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,7 +35,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ================================
 # Modelo YOLOv8 (Lazy Load)
 # ================================
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")  # Arquivo deve estar no repositório raiz
+MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
 model = None
 NAMES = {}
 
@@ -76,15 +76,33 @@ def load_model():
 
 def fator_decisao(diametro_medido: float, interna: bool):
     tipo = "interna" if interna else "externa"
-    candidatos = []
+
+    # 1️⃣ Tolerância alta precisão (±0.2 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
-            if abs(diametro_medido - diametro_ref) <= 0.5:  # tolerância
-                candidatos.append((norma, bitola, diametro_ref))
-    if not candidatos:
-        return None, None, None, 0.0, tipo
-    norma, bitola, diametro_ref = candidatos[0]
-    return norma, bitola, diametro_ref, 95.0, tipo
+            if abs(diametro_medido - diametro_ref) <= 0.2:
+                return norma, bitola, diametro_ref, 99.0, tipo
+
+    # 2️⃣ Tolerância média (±0.5 mm)
+    for norma, dados in TABELA_ROSCAS.items():
+        for bitola, diametro_ref in dados[tipo].items():
+            if abs(diametro_medido - diametro_ref) <= 0.5:
+                return norma, bitola, diametro_ref, 90.0, tipo
+
+    # 3️⃣ Se nada bater, pega o mais próximo
+    menor_dif = float("inf")
+    melhor = (None, None, None)
+    for norma, dados in TABELA_ROSCAS.items():
+        for bitola, diametro_ref in dados[tipo].items():
+            diff = abs(diametro_medido - diametro_ref)
+            if diff < menor_dif:
+                menor_dif = diff
+                melhor = (norma, bitola, diametro_ref)
+
+    if melhor[0]:
+        return melhor[0], melhor[1], melhor[2], 70.0, tipo  # baixa confiança
+
+    return None, None, None, 0.0, tipo
 
 # ================================
 # Função principal: medir com YOLO
@@ -113,7 +131,6 @@ def medir_diametro_yolo(imagem_path, interna: bool):
 
         logger.info(f"📦 Detectado: {label} ({cls_id}) - {largura:.1f}x{altura:.1f}px")
 
-        # 🔑 Aceita diferentes nomes para as classes
         if label in ["cartao", "card"]:
             cartao_px = max(largura, altura)
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
@@ -124,7 +141,6 @@ def medir_diametro_yolo(imagem_path, interna: bool):
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(img, "Rosca", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    # Nome único para debug
     debug_filename = f"debug_{next(tempfile._get_candidate_names())}.png"
     debug_path = os.path.join("static", debug_filename)
     cv2.imwrite(debug_path, img)
@@ -179,19 +195,12 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
 
         norma, bitola, diametro_ref, confianca, tipo = fator_decisao(diametro_medido, is_interna)
 
-        if not norma:
-            return JSONResponse(content={
-                "erro": "⚠️ Medida não corresponde a norma conhecida.",
-                "diametro_medido_mm": f"{diametro_medido:.2f}",
-                "debug": f"/{debug_path}"
-            }, status_code=400)
-
         return JSONResponse(content={
             "status": "ok",
             "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
             "diametro_medido_mm": f"{diametro_medido:.2f}",
-            "bitola": bitola,
-            "norma": norma,
+            "bitola": bitola if bitola else "indefinida",
+            "norma": norma if norma else "desconhecida",
             "confianca": f"{confianca:.1f}%",
             "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
             "debug": f"/{debug_path}"
