@@ -35,7 +35,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ================================
 # Modelo YOLOv8 (Lazy Load)
 # ================================
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
+MODEL_PATH = "runs/detect/train9/weights/best.pt"
+
 model = None
 NAMES = {}
 
