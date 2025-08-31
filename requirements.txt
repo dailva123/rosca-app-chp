@@ -10,8 +10,4 @@ torch==2.8.0+cpu
 torchvision==0.15.2+cpu
 pillow==10.2.0
 python-dotenv==1.0.1
-
 git+https://github.com/ultralytics/ultralytics.git
-
-
----
