@@ -10,3 +10,4 @@ torch==2.5.1+cpu
 pillow==9.5.0
 python-dotenv==1.0.1
 ultralytics==8.1.25
+
