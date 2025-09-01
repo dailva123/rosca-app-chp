@@ -137,7 +137,7 @@ def medir_diametro_yolo(imagem_path, interna: bool):
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
             cv2.putText(img, "Cartão", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
-        elif label in ["rosca", "thread", "screw"]:
+        elif label in ["rosca", "rosca_externa", "rosca_interna", "thread", "screw"]:
             rosca_px = max(largura, altura)
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(img, "Rosca", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -190,9 +190,15 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
 
         if diametro_medido <= 0:
             return JSONResponse(content={
-                "erro": "❌ Não foi possível identificar a rosca/cartão.",
-                "debug": f"/{debug_path}"
-            }, status_code=400)
+                "status": "falha",
+                "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
+                "diametro_medido_mm": "0.00",
+                "bitola": "indefinida",
+                "norma": "desconhecida",
+                "confianca": "0.0%",
+                "observacao": "❌ Não foi possível identificar a rosca/cartão.",
+                "debug": f"/{debug_path}" if debug_path else None
+            }, status_code=200)
 
         norma, bitola, diametro_ref, confianca, tipo = fator_decisao(diametro_medido, is_interna)
 
@@ -209,7 +215,16 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
 
     except Exception as e:
         logger.exception("💥 Erro inesperado no endpoint /analisar")
-        return JSONResponse(content={"erro": f"💥 Erro inesperado: {str(e)}"}, status_code=500)
+        return JSONResponse(content={
+            "status": "erro",
+            "tipo_rosca": "indefinida",
+            "diametro_medido_mm": "0.00",
+            "bitola": "indefinida",
+            "norma": "desconhecida",
+            "confianca": "0.0%",
+            "observacao": f"💥 Erro inesperado: {str(e)}",
+            "debug": None
+        }, status_code=500)
 
 # ================================
 # Health Check para Render

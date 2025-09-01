@@ -47,6 +47,11 @@
       display: block; height: 100%; text-align: center; color: white;
       font-size: 13px; line-height: 18px; font-weight: bold;
     }
+    .falha {
+      color: #b02a37;
+      font-weight: bold;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -144,21 +149,25 @@
         resposta.innerHTML = "";
         loading.style.display = "block";
 
-const response = await fetch("https://rosca-app-chp.onrender.com/analisar", {
-        method: "POST",
+        const response = await fetch("/analisar", {
+          method: "POST",
           body: formData
         });
 
         const data = await response.json();
         loading.style.display = "none";
 
-        if (!response.ok) throw new Error(data.erro || "Erro ao analisar a foto");
-
         resposta.style.display = "block";
 
         // Calcula cor da barra pela confiança
         let confianca = parseFloat(data.confianca) || 0;
         let cor = confianca >= 90 ? "#28a745" : confianca >= 70 ? "#ffc107" : "#dc3545";
+
+        // Monta resultado
+        let extraMsg = "";
+        if (data.status === "falha") {
+          extraMsg = `<p class="falha">⚠️ Detecção não encontrada. Verifique a foto e tente novamente.</p>`;
+        }
 
         resposta.innerHTML = `
           <h3>📊 Resultado da Análise</h3>
@@ -170,7 +179,8 @@ const response = await fetch("https://rosca-app-chp.onrender.com/analisar", {
           <div class="barra-confianca">
             <span style="width:${confianca}%; background:${cor};">${confianca.toFixed(1)}%</span>
           </div>
-          <p><strong>💡 Observações:</strong> ${data.observacao || data.erro}</p>
+          ${extraMsg}
+          <p><strong>💡 Observações:</strong> ${data.observacao || "Sem observações"} </p>
           ${data.debug ? `<h4>🔍 Visualização:</h4><img src="${data.debug}" alt="Imagem processada">` : ""}
         `;
       } catch (error) {
