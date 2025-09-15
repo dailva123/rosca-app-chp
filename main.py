@@ -75,7 +75,7 @@ def fator_decisao(diametro_medido: float, interna: bool):
             if abs(diametro_medido - diametro_ref) <= 0.5:
                 return norma, bitola, diametro_ref, 90.0
 
-    # 3️⃣ Se nada bater, pega o mais próximo
+    # 3️⃣ Mais próximo
     menor_dif = float("inf")
     melhor = (None, None, None)
     for norma, dados in TABELA_ROSCAS.items():
@@ -105,14 +105,14 @@ def detectar_multiplos_angulos(img, conf=0.4):
     return None
 
 # ================================
-# Função principal de análise robusta
+# Função principal de análise
 # ================================
 def analisar_imagem(path_img: str):
     img = cv2.imread(path_img)
     if img is None:
         return None, "❌ Erro ao abrir imagem."
 
-    # 1) Testa original + variações
+    # Testa original + variações
     variacoes = [
         img,
         cv2.convertScaleAbs(img, alpha=1.2, beta=30),
@@ -129,19 +129,15 @@ def analisar_imagem(path_img: str):
             resultados = res
             break
 
-    # 2) Se não achou, tenta ângulos
     if resultados is None:
         resultados = detectar_multiplos_angulos(img, conf=0.4)
 
-    # 3) Fallback confiança baixa
     if resultados is None:
         resultados = model.predict(img, conf=0.2, verbose=False)[0]
         if len(resultados.boxes) == 0:
             return None, "❌ Nenhum objeto detectado."
 
-    # ================================
     # Processar detecções
-    # ================================
     cartao_px = None
     roscas = []
     debug = img.copy()
@@ -177,21 +173,18 @@ def analisar_imagem(path_img: str):
         return None, "❌ Nenhuma rosca detectada."
 
     escala = CARTAO_LARGURA_MM / cartao_px
-    resultados_final = []
-    for r in roscas:
-        diametro_mm = r["px"] * escala
-        norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna=(r["tipo"]=="rosca_interna"))
+    r = roscas[0]  # pega só a primeira rosca
+    diametro_mm = r["px"] * escala
+    norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna=(r["tipo"]=="rosca_interna"))
 
-        resultados_final.append({
-            "tipo_rosca": r["tipo"],
-            "diametro_medido_mm": round(diametro_mm, 2),
-            "bitola": bitola if bitola else "indefinida",
-            "norma": norma if norma else "desconhecida",
-            "confianca": confianca,
-            "conf_yolo": round(r["conf"]*100, 1)
-        })
-
-    return {"resultados": resultados_final, "debug": f"/{debug_path}"}, None
+    return {
+        "tipo_rosca": r["tipo"],
+        "diametro_medido_mm": round(diametro_mm, 2),
+        "bitola": bitola if bitola else "indefinida",
+        "norma": norma if norma else "desconhecida",
+        "confianca": confianca,
+        "debug": f"/{debug_path}"
+    }, None
 
 # ================================
 # Rotas FastAPI
@@ -220,7 +213,11 @@ async def analisar(file: UploadFile = File(...)):
             return JSONResponse({
                 "status": "falha",
                 "msg": erro,
-                "resultados": [],
+                "tipo_rosca": "indefinida",
+                "diametro_medido_mm": "0.00",
+                "bitola": "indefinida",
+                "norma": "desconhecida",
+                "confianca": "0.0",
                 "debug": resp["debug"] if resp else None
             })
 
@@ -235,7 +232,11 @@ async def analisar(file: UploadFile = File(...)):
         return JSONResponse({
             "status": "erro",
             "msg": f"💥 Erro inesperado: {str(e)}",
-            "resultados": [],
+            "tipo_rosca": "indefinida",
+            "diametro_medido_mm": "0.00",
+            "bitola": "indefinida",
+            "norma": "desconhecida",
+            "confianca": "0.0",
             "debug": None
         }, status_code=500)
 
