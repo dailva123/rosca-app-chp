@@ -227,6 +227,27 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
         }, status_code=500)
 
 # ================================
+# Rotas de teste (train/valid/test)
+# ================================
+@app.get("/teste-train")
+def teste_train():
+    mdl = load_model()
+    results = mdl.predict(source="My-First-Project-3/train/images", save=True, name="predict-train")
+    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-train"}
+
+@app.get("/teste-valid")
+def teste_valid():
+    mdl = load_model()
+    results = mdl.predict(source="My-First-Project-3/valid/images", save=True, name="predict-valid")
+    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-valid"}
+
+@app.get("/teste-test")
+def teste_test():
+    mdl = load_model()
+    results = mdl.predict(source="My-First-Project-3/test/images", save=True, name="predict-test")
+    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-test"}
+
+# ================================
 # Health Check para Render
 # ================================
 @app.get("/healthz")

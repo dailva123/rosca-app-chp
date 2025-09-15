@@ -1,6 +1,24 @@
+# ================================
+# Patch para garantir compatibilidade com polars
+# ================================
+import sys, importlib
+
+try:
+    import polars
+except ImportError:
+    try:
+        polars = importlib.import_module("polars_lts_cpu")
+        sys.modules["polars"] = polars
+        print("⚡ Usando polars-lts-cpu como polars")
+    except ImportError:
+        print("❌ Nenhuma versão de polars encontrada. Instale com: pip install polars-lts-cpu")
+
+# ================================
+# Treinamento com Ultralytics YOLOv8
+# ================================
 from ultralytics import YOLO
 
-# carregar o modelo base (pode ser yolov8n.pt, yolov8s.pt, etc.)
+# carregar o modelo base (pode trocar por yolov8s.pt, yolov8m.pt, etc.)
 model = YOLO("yolov8n.pt")
 
 # treinar usando o dataset baixado do Roboflow

@@ -1,0 +1,14 @@
+names:
+- cartao
+- rosca_externa
+- rosca_interna
+nc: 3
+roboflow:
+  license: CC BY 4.0
+  project: my-first-project-2b8n6
+  url: https://universe.roboflow.com/dailva-souza-araujo/my-first-project-2b8n6/dataset/4
+  version: 4
+  workspace: dailva-souza-araujo
+test: ../test/images
+train: ../train/images
+val: ../valid/images
