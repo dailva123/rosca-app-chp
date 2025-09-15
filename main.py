@@ -1,9 +1,8 @@
 import os
 import cv2
-import numpy as np
 import tempfile
 import logging
-from fastapi import FastAPI, UploadFile, Form, File
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +19,6 @@ logger = logging.getLogger(__name__)
 # ================================
 app = FastAPI()
 
-# 🚀 CORS liberado para o front funcionar no Render
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,22 +27,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Servir arquivos estáticos
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ================================
-# Modelo YOLOv8 (Lazy Load)
+# Modelo YOLO
 # ================================
-MODEL_PATH = "runs/detect/train9/weights/best.pt"
-
-model = None
-NAMES = {}
-
-# Dimensão real do cartão ISO/IEC 7810 ID-1
+MODEL_PATH = "runs/detect/train12/weights/best.pt"
 CARTAO_LARGURA_MM = 85.6
 
+model = YOLO(MODEL_PATH)
+NAMES = model.names
+logger.info(f"✅ Modelo carregado: {MODEL_PATH} com classes {NAMES}")
+
 # ================================
-# Tabelas oficiais simuladas (mm)
+# Tabelas oficiais (mm)
 # ================================
 TABELA_ROSCAS = {
     "BSP": {
@@ -64,31 +60,20 @@ TABELA_ROSCAS = {
 # ================================
 # Funções utilitárias
 # ================================
-def load_model():
-    global model, NAMES
-    if model is None:
-        if not os.path.exists(MODEL_PATH):
-            logger.error(f"❌ Modelo não encontrado em {MODEL_PATH}")
-        logger.info(f"🔄 Carregando modelo YOLOv8: {MODEL_PATH}")
-        model = YOLO(MODEL_PATH)
-        NAMES = model.names
-        logger.info(f"✅ Modelo carregado com {len(NAMES)} classes: {NAMES}")
-    return model
-
 def fator_decisao(diametro_medido: float, interna: bool):
     tipo = "interna" if interna else "externa"
 
-    # 1️⃣ Tolerância alta precisão (±0.2 mm)
+    # 1️⃣ Alta precisão (±0.2 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.2:
-                return norma, bitola, diametro_ref, 99.0, tipo
+                return norma, bitola, diametro_ref, 99.0
 
-    # 2️⃣ Tolerância média (±0.5 mm)
+    # 2️⃣ Média precisão (±0.5 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.5:
-                return norma, bitola, diametro_ref, 90.0, tipo
+                return norma, bitola, diametro_ref, 90.0
 
     # 3️⃣ Se nada bater, pega o mais próximo
     menor_dif = float("inf")
@@ -101,59 +86,112 @@ def fator_decisao(diametro_medido: float, interna: bool):
                 melhor = (norma, bitola, diametro_ref)
 
     if melhor[0]:
-        return melhor[0], melhor[1], melhor[2], 70.0, tipo  # baixa confiança
+        return melhor[0], melhor[1], melhor[2], 70.0
 
-    return None, None, None, 0.0, tipo
+    return None, None, None, 0.0
+
+def detectar_multiplos_angulos(img, conf=0.4):
+    for angle in [0, 90, 180, 270]:
+        if angle != 0:
+            M = cv2.getRotationMatrix2D((img.shape[1]//2, img.shape[0]//2), angle, 1)
+            rot = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]))
+        else:
+            rot = img
+
+        res = model.predict(rot, conf=conf, verbose=False)[0]
+        if len(res.boxes) > 0:
+            logger.info(f"✅ Detecção feita com rotação {angle}°")
+            return res
+    return None
 
 # ================================
-# Função principal: medir com YOLO
+# Função principal de análise robusta
 # ================================
-def medir_diametro_yolo(imagem_path, interna: bool):
-    mdl = load_model()
-    img = cv2.imread(imagem_path)
+def analisar_imagem(path_img: str):
+    img = cv2.imread(path_img)
     if img is None:
-        logger.error("❌ Falha ao carregar imagem.")
-        return -1, None
+        return None, "❌ Erro ao abrir imagem."
 
-    # Redimensionar (max 800px)
-    scale_factor = 800 / max(img.shape[:2])
-    img = cv2.resize(img, (int(img.shape[1] * scale_factor), int(img.shape[0] * scale_factor)))
+    # 1) Testa original + variações
+    variacoes = [
+        img,
+        cv2.convertScaleAbs(img, alpha=1.2, beta=30),
+        cv2.convertScaleAbs(img, alpha=0.8, beta=-30),
+        cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+    ]
 
-    results = mdl(img, verbose=False)[0]
+    resultados = None
+    for var in variacoes:
+        if len(var.shape) == 2:
+            var = cv2.cvtColor(var, cv2.COLOR_GRAY2BGR)
+        res = model.predict(var, conf=0.4, verbose=False)[0]
+        if len(res.boxes) > 0:
+            resultados = res
+            break
 
+    # 2) Se não achou, tenta ângulos
+    if resultados is None:
+        resultados = detectar_multiplos_angulos(img, conf=0.4)
+
+    # 3) Fallback confiança baixa
+    if resultados is None:
+        resultados = model.predict(img, conf=0.2, verbose=False)[0]
+        if len(resultados.boxes) == 0:
+            return None, "❌ Nenhum objeto detectado."
+
+    # ================================
+    # Processar detecções
+    # ================================
     cartao_px = None
-    rosca_px = None
+    roscas = []
+    debug = img.copy()
 
-    for box in results.boxes:
+    for box in resultados.boxes:
         cls_id = int(box.cls[0])
+        conf = float(box.conf[0])
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
         largura, altura = x2 - x1, y2 - y1
-        label = NAMES.get(cls_id, str(cls_id)).lower()
+        label = NAMES.get(cls_id, str(cls_id))
 
-        logger.info(f"📦 Detectado: {label} ({cls_id}) - {largura:.1f}x{altura:.1f}px")
+        cv2.rectangle(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(debug, f"{label} {conf:.2f}", (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        if label in ["cartao", "card"]:
+        if label == "cartao":
             cartao_px = max(largura, altura)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(img, "Cartão", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
-        elif label in ["rosca", "rosca_externa", "rosca_interna", "thread", "screw"]:
-            rosca_px = max(largura, altura)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(img, "Rosca", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        if label in ["rosca_externa", "rosca_interna"]:
+            roscas.append({
+                "tipo": label,
+                "px": max(largura, altura),
+                "conf": conf
+            })
 
     debug_filename = f"debug_{next(tempfile._get_candidate_names())}.png"
     debug_path = os.path.join("static", debug_filename)
-    cv2.imwrite(debug_path, img)
+    cv2.imwrite(debug_path, debug)
 
-    if not cartao_px or not rosca_px:
-        logger.warning("⚠️ Não encontrou cartao ou rosca na imagem.")
-        return -1, debug_path
+    if not cartao_px:
+        return None, "❌ Nenhum cartão detectado."
+    if not roscas:
+        return None, "❌ Nenhuma rosca detectada."
 
     escala = CARTAO_LARGURA_MM / cartao_px
-    diametro_mm = rosca_px * escala
-    logger.info(f"📏 Diametro calculado: {diametro_mm:.2f} mm")
-    return diametro_mm, debug_path
+    resultados_final = []
+    for r in roscas:
+        diametro_mm = r["px"] * escala
+        norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna=(r["tipo"]=="rosca_interna"))
+
+        resultados_final.append({
+            "tipo_rosca": r["tipo"],
+            "diametro_medido_mm": round(diametro_mm, 2),
+            "bitola": bitola if bitola else "indefinida",
+            "norma": norma if norma else "desconhecida",
+            "confianca": confianca,
+            "conf_yolo": round(r["conf"]*100, 1)
+        })
+
+    return {"resultados": resultados_final, "debug": f"/{debug_path}"}, None
 
 # ================================
 # Rotas FastAPI
@@ -162,21 +200,11 @@ def medir_diametro_yolo(imagem_path, interna: bool):
 def home():
     return FileResponse("static/index.html")
 
-@app.get("/termos", response_class=HTMLResponse)
-def termos():
-    return FileResponse("static/termos.html")
-
-@app.get("/privacidade", response_class=HTMLResponse)
-def privacidade():
-    return FileResponse("static/privacidade.html")
-
 @app.post("/analisar")
-async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
+async def analisar(file: UploadFile = File(...)):
     try:
         if not file:
-            return JSONResponse(content={"erro": "📷 Nenhum arquivo recebido."}, status_code=400)
-
-        is_interna = interna.strip().lower() in ["true", "1", "yes"]
+            return JSONResponse({"status": "erro", "msg": "📷 Nenhum arquivo enviado."}, status_code=400)
 
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in [".png", ".jpg", ".jpeg"]:
@@ -186,70 +214,31 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
             tmp.write(await file.read())
             temp_path = tmp.name
 
-        diametro_medido, debug_path = medir_diametro_yolo(temp_path, is_interna)
+        resp, erro = analisar_imagem(temp_path)
 
-        if diametro_medido <= 0:
-            return JSONResponse(content={
+        if erro:
+            return JSONResponse({
                 "status": "falha",
-                "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
-                "diametro_medido_mm": "0.00",
-                "bitola": "indefinida",
-                "norma": "desconhecida",
-                "confianca": "0.0%",
-                "observacao": "❌ Não foi possível identificar a rosca/cartão.",
-                "debug": f"/{debug_path}" if debug_path else None
-            }, status_code=200)
+                "msg": erro,
+                "resultados": [],
+                "debug": resp["debug"] if resp else None
+            })
 
-        norma, bitola, diametro_ref, confianca, tipo = fator_decisao(diametro_medido, is_interna)
-
-        return JSONResponse(content={
+        return JSONResponse({
             "status": "ok",
-            "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
-            "diametro_medido_mm": f"{diametro_medido:.2f}",
-            "bitola": bitola if bitola else "indefinida",
-            "norma": norma if norma else "desconhecida",
-            "confianca": f"{confianca:.1f}%",
-            "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
-            "debug": f"/{debug_path}"
+            "msg": "✅ Detecção concluída.",
+            **resp
         })
 
     except Exception as e:
-        logger.exception("💥 Erro inesperado no endpoint /analisar")
-        return JSONResponse(content={
+        logger.exception("💥 Erro no /analisar")
+        return JSONResponse({
             "status": "erro",
-            "tipo_rosca": "indefinida",
-            "diametro_medido_mm": "0.00",
-            "bitola": "indefinida",
-            "norma": "desconhecida",
-            "confianca": "0.0%",
-            "observacao": f"💥 Erro inesperado: {str(e)}",
+            "msg": f"💥 Erro inesperado: {str(e)}",
+            "resultados": [],
             "debug": None
         }, status_code=500)
 
-# ================================
-# Rotas de teste (train/valid/test)
-# ================================
-@app.get("/teste-train")
-def teste_train():
-    mdl = load_model()
-    results = mdl.predict(source="My-First-Project-3/train/images", save=True, name="predict-train")
-    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-train"}
-
-@app.get("/teste-valid")
-def teste_valid():
-    mdl = load_model()
-    results = mdl.predict(source="My-First-Project-3/valid/images", save=True, name="predict-valid")
-    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-valid"}
-
-@app.get("/teste-test")
-def teste_test():
-    mdl = load_model()
-    results = mdl.predict(source="My-First-Project-3/test/images", save=True, name="predict-test")
-    return {"status": "ok", "mensagem": "Resultados salvos em runs/detect/predict-test"}
-
-# ================================
-# Health Check para Render
-# ================================
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
