@@ -2,7 +2,7 @@ import os
 import cv2
 import tempfile
 import logging
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Modelo YOLO
 # ================================
 MODEL_PATH = "runs/detect/train12/weights/best.pt"
-CARTAO_LARGURA_MM = 85.6
+CARTAO_LARGURA_MM = 85.6  # padrão ISO do cartão
 
 model = YOLO(MODEL_PATH)
 NAMES = model.names
@@ -63,19 +63,15 @@ TABELA_ROSCAS = {
 def fator_decisao(diametro_medido: float, interna: bool):
     tipo = "interna" if interna else "externa"
 
-    # 1️⃣ Alta precisão (±0.2 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.2:
                 return norma, bitola, diametro_ref, 99.0
-
-    # 2️⃣ Média precisão (±0.5 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.5:
                 return norma, bitola, diametro_ref, 90.0
 
-    # 3️⃣ Mais próximo
     menor_dif = float("inf")
     melhor = (None, None, None)
     for norma, dados in TABELA_ROSCAS.items():
@@ -87,60 +83,74 @@ def fator_decisao(diametro_medido: float, interna: bool):
 
     if melhor[0]:
         return melhor[0], melhor[1], melhor[2], 70.0
-
     return None, None, None, 0.0
 
-def detectar_multiplos_angulos(img, conf=0.4):
-    for angle in [0, 90, 180, 270]:
-        if angle != 0:
-            M = cv2.getRotationMatrix2D((img.shape[1]//2, img.shape[0]//2), angle, 1)
-            rot = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]))
-        else:
-            rot = img
 
-        res = model.predict(rot, conf=conf, verbose=False)[0]
-        if len(res.boxes) > 0:
-            logger.info(f"✅ Detecção feita com rotação {angle}°")
-            return res
-    return None
-
-# ================================
-# Função principal de análise
-# ================================
-def analisar_imagem(path_img: str):
-    img = cv2.imread(path_img)
-    if img is None:
-        return None, "❌ Erro ao abrir imagem."
-
-    # Testa original + variações
+def tentar_variacoes(img):
     variacoes = [
         img,
         cv2.convertScaleAbs(img, alpha=1.2, beta=30),
         cv2.convertScaleAbs(img, alpha=0.8, beta=-30),
         cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
     ]
+    out = []
+    for v in variacoes:
+        if len(v.shape) == 2:
+            v = cv2.cvtColor(v, cv2.COLOR_GRAY2BGR)
+        out.append(v)
+    return out
 
+
+def tentar_angulos(img):
+    angulos = [0, 90, 180, 270]
+    imagens = []
+    for ang in angulos:
+        if ang == 0:
+            imagens.append(img)
+        else:
+            M = cv2.getRotationMatrix2D((img.shape[1]//2, img.shape[0]//2), ang, 1)
+            imagens.append(cv2.warpAffine(img, M, (img.shape[1], img.shape[0])))
+    return imagens
+
+# ================================
+# Função principal
+# ================================
+def analisar_imagem(path_img: str, interna: bool):
+    img = cv2.imread(path_img)
+    if img is None:
+        return None, "❌ Erro ao abrir imagem."
+
+    # 🔧 Normaliza para evitar distorções de zoom (0.5x, 1x, 2x)
+    max_dim = max(img.shape[:2])
+    if max_dim > 1000:  # limita o tamanho máximo
+        scale = 1000 / max_dim
+        img = cv2.resize(img, (int(img.shape[1]*scale), int(img.shape[0]*scale)))
+
+    debug = img.copy()
     resultados = None
-    for var in variacoes:
-        if len(var.shape) == 2:
-            var = cv2.cvtColor(var, cv2.COLOR_GRAY2BGR)
+
+    for var in tentar_variacoes(img):
         res = model.predict(var, conf=0.4, verbose=False)[0]
         if len(res.boxes) > 0:
             resultados = res
+            debug = var.copy()
             break
 
     if resultados is None:
-        resultados = detectar_multiplos_angulos(img, conf=0.4)
+        for rot in tentar_angulos(img):
+            res = model.predict(rot, conf=0.4, verbose=False)[0]
+            if len(res.boxes) > 0:
+                resultados = res
+                debug = rot.copy()
+                break
 
     if resultados is None:
         resultados = model.predict(img, conf=0.2, verbose=False)[0]
         if len(resultados.boxes) == 0:
             return None, "❌ Nenhum objeto detectado."
 
-    # Processar detecções
     cartao_px = None
-    roscas = []
-    debug = img.copy()
+    rosca_px = None
 
     for box in resultados.boxes:
         cls_id = int(box.cls[0])
@@ -149,19 +159,14 @@ def analisar_imagem(path_img: str):
         largura, altura = x2 - x1, y2 - y1
         label = NAMES.get(cls_id, str(cls_id))
 
+        if label == "cartao":
+            cartao_px = max(largura, altura)
+        if (interna and label == "rosca_interna") or (not interna and label == "rosca_externa"):
+            rosca_px = max(largura, altura)
+
         cv2.rectangle(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(debug, f"{label} {conf:.2f}", (x1, y1 - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-        if label == "cartao":
-            cartao_px = max(largura, altura)
-
-        if label in ["rosca_externa", "rosca_interna"]:
-            roscas.append({
-                "tipo": label,
-                "px": max(largura, altura),
-                "conf": conf
-            })
 
     debug_filename = f"debug_{next(tempfile._get_candidate_names())}.png"
     debug_path = os.path.join("static", debug_filename)
@@ -169,20 +174,21 @@ def analisar_imagem(path_img: str):
 
     if not cartao_px:
         return None, "❌ Nenhum cartão detectado."
-    if not roscas:
+    if not rosca_px:
         return None, "❌ Nenhuma rosca detectada."
 
     escala = CARTAO_LARGURA_MM / cartao_px
-    r = roscas[0]  # pega só a primeira rosca
-    diametro_mm = r["px"] * escala
-    norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna=(r["tipo"]=="rosca_interna"))
+    diametro_mm = rosca_px * escala
+
+    norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna)
 
     return {
-        "tipo_rosca": r["tipo"],
+        "tipo_rosca": "Rosca interna (fêmea)" if interna else "Rosca externa (macho)",
         "diametro_medido_mm": round(diametro_mm, 2),
         "bitola": bitola if bitola else "indefinida",
         "norma": norma if norma else "desconhecida",
         "confianca": confianca,
+        "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
         "debug": f"/{debug_path}"
     }, None
 
@@ -194,10 +200,9 @@ def home():
     return FileResponse("static/index.html")
 
 @app.post("/analisar")
-async def analisar(file: UploadFile = File(...)):
+async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
     try:
-        if not file:
-            return JSONResponse({"status": "erro", "msg": "📷 Nenhum arquivo enviado."}, status_code=400)
+        is_interna = interna.strip().lower() in ["true", "1", "yes"]
 
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in [".png", ".jpg", ".jpeg"]:
@@ -207,23 +212,23 @@ async def analisar(file: UploadFile = File(...)):
             tmp.write(await file.read())
             temp_path = tmp.name
 
-        resp, erro = analisar_imagem(temp_path)
+        resp, erro = analisar_imagem(temp_path, is_interna)
 
         if erro:
             return JSONResponse({
                 "status": "falha",
                 "msg": erro,
-                "tipo_rosca": "indefinida",
+                "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
                 "diametro_medido_mm": "0.00",
-                "bitola": "indefinida",
-                "norma": "desconhecida",
+                "bitola": "-",
+                "norma": "-",
                 "confianca": "0.0",
+                "observacao": erro,
                 "debug": resp["debug"] if resp else None
             })
 
         return JSONResponse({
             "status": "ok",
-            "msg": "✅ Detecção concluída.",
             **resp
         })
 
@@ -234,9 +239,10 @@ async def analisar(file: UploadFile = File(...)):
             "msg": f"💥 Erro inesperado: {str(e)}",
             "tipo_rosca": "indefinida",
             "diametro_medido_mm": "0.00",
-            "bitola": "indefinida",
-            "norma": "desconhecida",
+            "bitola": "-",
+            "norma": "-",
             "confianca": "0.0",
+            "observacao": "Erro inesperado.",
             "debug": None
         }, status_code=500)
 
