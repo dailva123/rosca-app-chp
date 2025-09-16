@@ -33,7 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Modelo YOLO
 # ================================
 MODEL_PATH = "runs/detect/train12/weights/best.pt"
-CARTAO_LARGURA_MM = 85.6  # padrão ISO do cartão
+CARTAO_LARGURA_MM = 85.6
 
 model = YOLO(MODEL_PATH)
 NAMES = model.names
@@ -63,15 +63,19 @@ TABELA_ROSCAS = {
 def fator_decisao(diametro_medido: float, interna: bool):
     tipo = "interna" if interna else "externa"
 
+    # 1️⃣ Alta precisão (±0.2 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.2:
                 return norma, bitola, diametro_ref, 99.0
+
+    # 2️⃣ Média precisão (±0.5 mm)
     for norma, dados in TABELA_ROSCAS.items():
         for bitola, diametro_ref in dados[tipo].items():
             if abs(diametro_medido - diametro_ref) <= 0.5:
                 return norma, bitola, diametro_ref, 90.0
 
+    # 3️⃣ Mais próximo
     menor_dif = float("inf")
     melhor = (None, None, None)
     for norma, dados in TABELA_ROSCAS.items():
@@ -83,34 +87,9 @@ def fator_decisao(diametro_medido: float, interna: bool):
 
     if melhor[0]:
         return melhor[0], melhor[1], melhor[2], 70.0
+
     return None, None, None, 0.0
 
-
-def tentar_variacoes(img):
-    variacoes = [
-        img,
-        cv2.convertScaleAbs(img, alpha=1.2, beta=30),
-        cv2.convertScaleAbs(img, alpha=0.8, beta=-30),
-        cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
-    ]
-    out = []
-    for v in variacoes:
-        if len(v.shape) == 2:
-            v = cv2.cvtColor(v, cv2.COLOR_GRAY2BGR)
-        out.append(v)
-    return out
-
-
-def tentar_angulos(img):
-    angulos = [0, 90, 180, 270]
-    imagens = []
-    for ang in angulos:
-        if ang == 0:
-            imagens.append(img)
-        else:
-            M = cv2.getRotationMatrix2D((img.shape[1]//2, img.shape[0]//2), ang, 1)
-            imagens.append(cv2.warpAffine(img, M, (img.shape[1], img.shape[0])))
-    return imagens
 
 # ================================
 # Função principal
@@ -120,35 +99,21 @@ def analisar_imagem(path_img: str, interna: bool):
     if img is None:
         return None, "❌ Erro ao abrir imagem."
 
-    # 🔧 Normaliza para evitar distorções de zoom (0.5x, 1x, 2x)
-    max_dim = max(img.shape[:2])
-    if max_dim > 1000:  # limita o tamanho máximo
-        scale = 1000 / max_dim
-        img = cv2.resize(img, (int(img.shape[1]*scale), int(img.shape[0]*scale)))
-
     debug = img.copy()
-    resultados = None
 
-    for var in tentar_variacoes(img):
-        res = model.predict(var, conf=0.4, verbose=False)[0]
-        if len(res.boxes) > 0:
-            resultados = res
-            debug = var.copy()
-            break
+    # === Tenta primeiro com conf=0.4 ===
+    resultados = model.predict(img, conf=0.4, verbose=False)[0]
 
-    if resultados is None:
-        for rot in tentar_angulos(img):
-            res = model.predict(rot, conf=0.4, verbose=False)[0]
-            if len(res.boxes) > 0:
-                resultados = res
-                debug = rot.copy()
-                break
-
-    if resultados is None:
+    # === Se não achou nada, tenta com conf=0.2 ===
+    if len(resultados.boxes) == 0:
+        logger.warning("⚠️ Nenhuma detecção em conf=0.4, tentando com conf=0.2")
         resultados = model.predict(img, conf=0.2, verbose=False)[0]
         if len(resultados.boxes) == 0:
             return None, "❌ Nenhum objeto detectado."
 
+    # ================================
+    # Processar detecções
+    # ================================
     cartao_px = None
     rosca_px = None
 
@@ -191,6 +156,7 @@ def analisar_imagem(path_img: str, interna: bool):
         "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
         "debug": f"/{debug_path}"
     }, None
+
 
 # ================================
 # Rotas FastAPI
