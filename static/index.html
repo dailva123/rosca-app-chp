@@ -52,6 +52,11 @@
       font-weight: bold;
       margin-top: 10px;
     }
+    table.candidatos { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+    table.candidatos th, table.candidatos td { border: 1px solid #ccd; padding: 6px 8px; text-align: left; }
+    table.candidatos th { background: #dbe8ff; }
+    table.candidatos tr.top { background: #eafbea; font-weight: bold; }
+    .aviso { margin-top: 10px; font-size: 13px; color: #555; background: #fff8e1; border: 1px solid #f0d98c; border-radius: 6px; padding: 8px 10px; }
   </style>
 </head>
 <body>
@@ -59,6 +64,8 @@
     <h2>🔧 Identificação Automática de Roscas</h2>
 
     <div class="instrucoes">
+      <p>Identifica a bitola aproximada em <strong>mm e polegadas</strong>, comparando com as normas
+        <strong>BSPP, BSPT, NPT, UNC e UNF</strong>.</p>
       <p><strong>Como tirar a foto corretamente:</strong></p>
       <ol>
         <li>Coloque a rosca sobre fundo claro (ideal: branco).</li>
@@ -174,18 +181,37 @@
           extraMsg = `<p class="falha">⚠️ Detecção não encontrada. Verifique a foto (mesmo com zoom) e tente novamente.</p>`;
         }
 
+        let tabelaCandidatos = "";
+        if (Array.isArray(data.candidatos) && data.candidatos.length) {
+          const linhas = data.candidatos.map((c, i) => `
+            <tr class="${i === 0 ? "top" : ""}">
+              <td>${c.norma} ${c.bitola_pol}"</td>
+              <td>${c.forma}</td>
+              <td>${c.diametro_ref_mm} mm</td>
+              <td>${c.diferenca_mm} mm</td>
+              <td>${c.confianca.toFixed ? c.confianca.toFixed(1) : c.confianca}%</td>
+            </tr>`).join("");
+          tabelaCandidatos = `
+            <p><strong>🔎 Possíveis normas/bitolas (mais prováveis primeiro):</strong></p>
+            <table class="candidatos">
+              <thead><tr><th>Norma / Bitola</th><th>Formato</th><th>Ø referência</th><th>Diferença</th><th>Confiança</th></tr></thead>
+              <tbody>${linhas}</tbody>
+            </table>`;
+        }
+
         resposta.innerHTML = `
           <h3>📊 Resultado da Análise</h3>
           <p><strong>🔧 Tipo de rosca:</strong> ${data.tipo_rosca || "-"} </p>
-          <p><strong>📏 Diâmetro (mm):</strong> ${data.diametro_medido_mm || "-"} </p>
-          <p><strong>📌 Bitola:</strong> ${data.bitola || "-"} </p>
-          <p><strong>📖 Norma:</strong> ${data.norma || "-"} </p>
+          <p><strong>📏 Diâmetro medido:</strong> ${data.diametro_medido_mm || "-"} mm (≈ ${data.diametro_medido_pol || "-"}")</p>
+          <p><strong>📌 Bitola mais provável:</strong> ${data.bitola || "-"} </p>
+          <p><strong>📖 Norma mais provável:</strong> ${data.norma || "-"} </p>
           <p><strong>✅ Confiança:</strong></p>
           <div class="barra-confianca">
             <span style="width:${confianca}%; background:${cor};">${confianca.toFixed(1)}%</span>
           </div>
           ${extraMsg}
-          <p><strong>💡 Observações:</strong> ${data.observacao || "Sem observações"} </p>
+          ${tabelaCandidatos}
+          <p class="aviso">💡 ${data.observacao || "Sem observações"}</p>
           ${data.debug ? `<h4>🔍 Visualização:</h4><img src="${data.debug}" alt="Imagem processada">` : ""}
         `;
       } catch (error) {
