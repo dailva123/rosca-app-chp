@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 
+import tabelas
+
 # ================================
 # Configuração de logging
 # ================================
@@ -40,56 +42,8 @@ NAMES = model.names
 logger.info(f"✅ Modelo carregado: {MODEL_PATH} com classes {NAMES}")
 
 # ================================
-# Tabelas oficiais (mm)
+# Tabelas oficiais (mm) - ver tabelas.py (BSPP, BSPT, NPT, UNC, UNF)
 # ================================
-TABELA_ROSCAS = {
-    "BSP": {
-        "externa": {"1/8": 9.7, "1/4": 13.2, "3/8": 16.7, "1/2": 20.9, "3/4": 26.4, "1": 33.2},
-        "interna": {"1/8": 8.5, "1/4": 11.8, "3/8": 15.3, "1/2": 19.0, "3/4": 24.5, "1": 30.3}
-    },
-    "NPT": {
-        "externa": {"1/8": 10.2, "1/4": 13.7, "3/8": 17.1, "1/2": 21.3, "3/4": 26.7, "1": 33.5},
-        "interna": {"1/8": 8.7, "1/4": 11.9, "3/8": 15.5, "1/2": 19.3, "3/4": 24.9, "1": 30.8}
-    },
-    "UNF": {
-        "externa": {"1/4": 6.35, "3/8": 9.53, "1/2": 12.7, "3/4": 19.05, "1": 25.4},
-        "interna": {"1/4": 5.8, "3/8": 8.8, "1/2": 12.0, "3/4": 18.3, "1": 24.5}
-    }
-}
-
-# ================================
-# Funções utilitárias
-# ================================
-def fator_decisao(diametro_medido: float, interna: bool):
-    tipo = "interna" if interna else "externa"
-
-    # 1️⃣ Alta precisão (±0.2 mm)
-    for norma, dados in TABELA_ROSCAS.items():
-        for bitola, diametro_ref in dados[tipo].items():
-            if abs(diametro_medido - diametro_ref) <= 0.2:
-                return norma, bitola, diametro_ref, 99.0
-
-    # 2️⃣ Média precisão (±0.5 mm)
-    for norma, dados in TABELA_ROSCAS.items():
-        for bitola, diametro_ref in dados[tipo].items():
-            if abs(diametro_medido - diametro_ref) <= 0.5:
-                return norma, bitola, diametro_ref, 90.0
-
-    # 3️⃣ Mais próximo
-    menor_dif = float("inf")
-    melhor = (None, None, None)
-    for norma, dados in TABELA_ROSCAS.items():
-        for bitola, diametro_ref in dados[tipo].items():
-            diff = abs(diametro_medido - diametro_ref)
-            if diff < menor_dif:
-                menor_dif = diff
-                melhor = (norma, bitola, diametro_ref)
-
-    if melhor[0]:
-        return melhor[0], melhor[1], melhor[2], 70.0
-
-    return None, None, None, 0.0
-
 
 # ================================
 # Função principal
@@ -145,15 +99,27 @@ def analisar_imagem(path_img: str, interna: bool):
     escala = CARTAO_LARGURA_MM / cartao_px
     diametro_mm = rosca_px * escala
 
-    norma, bitola, diam_ref, confianca = fator_decisao(diametro_mm, interna)
+    candidatos = tabelas.encontrar_candidatos(diametro_mm, interna, top_n=3)
+    melhor = candidatos[0] if candidatos else None
+
+    observacao = "ℹ️ Detecção feita por IA (YOLOv8). Diâmetro estimado por comparação com um cartão de referência."
+    if melhor and len(candidatos) > 1 and candidatos[1]["diferenca_mm"] <= 0.3 and candidatos[1]["bitola_pol"] == melhor["bitola_pol"]:
+        observacao += (
+            f" Atenção: o diâmetro medido é compatível tanto com rosca {melhor['forma']} quanto com "
+            f"{candidatos[1]['forma']}. Verifique visualmente se a rosca afunila (cônica) ou é reta (paralela) "
+            "para confirmar entre elas."
+        )
+    observacao += " Recomenda-se confirmar a bitola com um gabarito/pente de rosca antes de fazer o pedido."
 
     return {
         "tipo_rosca": "Rosca interna (fêmea)" if interna else "Rosca externa (macho)",
         "diametro_medido_mm": round(diametro_mm, 2),
-        "bitola": bitola if bitola else "indefinida",
-        "norma": norma if norma else "desconhecida",
-        "confianca": confianca,
-        "observacao": "ℹ️ Detecção feita por IA (YOLOv8).",
+        "diametro_medido_pol": tabelas.mm_para_polegada(diametro_mm),
+        "bitola": melhor["bitola_pol"] if melhor else "indefinida",
+        "norma": melhor["norma"] if melhor else "desconhecida",
+        "confianca": melhor["confianca"] if melhor else 0.0,
+        "candidatos": candidatos,
+        "observacao": observacao,
         "debug": f"/{debug_path}"
     }, None
 
@@ -215,3 +181,31 @@ async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
+
+@app.get("/termos", response_class=HTMLResponse)
+def termos_de_uso():
+    return (
+        "<html><head><meta charset='utf-8'><title>Termos de Uso</title></head><body>"
+        "<h2>Termos de Uso</h2>"
+        "<p>Este aplicativo estima o diâmetro e a possível norma de uma rosca (BSPP, BSPT, NPT, "
+        "UNC, UNF) a partir de uma foto, usando um cartão de referência para calcular a escala. "
+        "O resultado é uma estimativa gerada por processamento de imagem e inteligência artificial "
+        "e pode conter erros de medição decorrentes de ângulo de foto, iluminação, distância ou "
+        "qualidade da imagem.</p>"
+        "<p>Antes de comprar, fabricar ou instalar qualquer peça, confirme sempre a bitola com um "
+        "gabarito/pente de rosca físico ou com um profissional qualificado. O uso deste aplicativo "
+        "não substitui a verificação técnica da peça.</p>"
+        "</body></html>"
+    )
+
+@app.get("/privacidade", response_class=HTMLResponse)
+def politica_de_privacidade():
+    return (
+        "<html><head><meta charset='utf-8'><title>Política de Privacidade</title></head><body>"
+        "<h2>Política de Privacidade</h2>"
+        "<p>As fotos enviadas são usadas apenas para detectar e medir a rosca e o cartão de "
+        "referência na imagem, e para gerar a imagem de depuração exibida no resultado. Não "
+        "coletamos dados pessoais, não compartilhamos as imagens com terceiros e não as usamos "
+        "para nenhuma outra finalidade além de responder à sua solicitação de análise.</p>"
+        "</body></html>"
+    )
