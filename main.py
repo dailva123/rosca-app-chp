@@ -36,6 +36,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ================================
 MODEL_PATH = "runs/detect/train12/weights/best.pt"
 CARTAO_LARGURA_MM = 85.6
+MAX_DIMENSAO_PX = 1280  # reduz fotos grandes antes de processar, para economizar memória/CPU
 
 model = YOLO(MODEL_PATH)
 NAMES = model.names
@@ -52,6 +53,12 @@ def analisar_imagem(path_img: str, interna: bool):
     img = cv2.imread(path_img)
     if img is None:
         return None, "❌ Erro ao abrir imagem."
+
+    altura, largura = img.shape[:2]
+    maior_lado = max(altura, largura)
+    if maior_lado > MAX_DIMENSAO_PX:
+        fator_resize = MAX_DIMENSAO_PX / maior_lado
+        img = cv2.resize(img, (int(largura * fator_resize), int(altura * fator_resize)), interpolation=cv2.INTER_AREA)
 
     debug = img.copy()
 
