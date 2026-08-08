@@ -1,39 +1,3 @@
-import os
-import cv2
-import tempfile
-import logging
-from fastapi import FastAPI, UploadFile, Form, File
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
-
-import tabelas
-
-# ================================
-# Configuração de logging
-# ================================
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ================================
-# Inicialização do FastAPI
-# ================================
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# ================================
-# Modelo YOLO
-# ================================
 MODEL_PATH = "runs/detect/train12/weights/best.pt"
 CARTAO_LARGURA_MM = 85.6
 MAX_DIMENSAO_PX = 1280  # reduz fotos grandes antes de processar, para economizar memória/CPU
