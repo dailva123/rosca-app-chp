@@ -1,3 +1,39 @@
+import os
+import cv2
+import tempfile
+import logging
+from fastapi import FastAPI, UploadFile, Form, File
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from ultralytics import YOLO
+
+import tabelas
+
+# ================================
+# Configuração de logging
+# ================================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ================================
+# Inicialização do FastAPI
+# ================================
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ================================
+# Modelo YOLO
+# ================================
 MODEL_PATH = "runs/detect/train12/weights/best.pt"
 CARTAO_LARGURA_MM = 85.6
 MAX_DIMENSAO_PX = 1280  # reduz fotos grandes antes de processar, para economizar memória/CPU
@@ -7,13 +43,13 @@ NAMES = model.names
 logger.info(f"✅ Modelo carregado: {MODEL_PATH} com classes {NAMES}")
 
 # ================================
-# Tabelas oficiais (mm) - ver tabelas.py (BSPP, BSPT, NPT, UNC, UNF)
+# Tabelas oficiais (mm) - ver tabelas.py (BSPP, BSPT, NPT)
 # ================================
 
 # ================================
 # Função principal
 # ================================
-def analisar_imagem(path_img: str, interna: bool):
+def analisar_imagem(path_img: str, interna: bool, formato: str = None):
     img = cv2.imread(path_img)
     if img is None:
         return None, "❌ Erro ao abrir imagem."
@@ -70,16 +106,34 @@ def analisar_imagem(path_img: str, interna: bool):
     escala = CARTAO_LARGURA_MM / cartao_px
     diametro_mm = rosca_px * escala
 
-    candidatos = tabelas.encontrar_candidatos(diametro_mm, interna, top_n=3)
+    candidatos = tabelas.encontrar_candidatos(diametro_mm, interna, formato=formato, top_n=3)
     melhor = candidatos[0] if candidatos else None
 
     observacao = "ℹ️ Detecção feita por IA (YOLOv8). Diâmetro estimado por comparação com um cartão de referência."
-    if melhor and len(candidatos) > 1 and candidatos[1]["diferenca_mm"] <= 0.3 and candidatos[1]["bitola_pol"] == melhor["bitola_pol"]:
+
+    # Margem maior no caso "cônica" porque BSPT x NPT ficam naturalmente próximas
+    # (0.15mm a 0.7mm de diferença nas bitolas mais comuns) - vale avisar mesmo assim.
+    margem_empate = 0.6 if formato == "conica" else 0.3
+    empatados = [
+        c for c in candidatos[1:]
+        if c["bitola_pol"] == melhor["bitola_pol"] and c["diferenca_mm"] - melhor["diferenca_mm"] <= margem_empate
+    ] if melhor else []
+
+    if empatados and not formato:
+        # Sem resposta sobre o formato: BSPP (reta) e BSPT/NPT (cônicas) ainda competem.
+        normas_empatadas = ", ".join(dict.fromkeys([melhor["norma"]] + [c["norma"] for c in empatados]))
         observacao += (
-            f" Atenção: o diâmetro medido é compatível tanto com rosca {melhor['forma']} quanto com "
-            f"{candidatos[1]['forma']}. Verifique visualmente se a rosca afunila (cônica) ou é reta (paralela) "
-            "para confirmar entre elas."
+            f" Atenção: o diâmetro medido é compatível com mais de uma norma ({normas_empatadas}). "
+            "Verifique se a rosca afunila (cônica: BSPT/NPT) ou é reta (paralela: BSPP) para confirmar entre elas."
         )
+    elif empatados and formato == "conica":
+        # BSPT x NPT: mesmo formato cônico, diâmetros muito próximos, difícil diferenciar só pela foto.
+        observacao += (
+            f" Atenção: o diâmetro medido é compatível tanto com {melhor['norma']} quanto com "
+            f"{empatados[0]['norma']} (as duas são cônicas e têm tamanhos muito parecidos). "
+            "Recomenda-se comparar com um gabarito físico BSPT/NPT para ter certeza."
+        )
+
     observacao += " Recomenda-se confirmar a bitola com um gabarito/pente de rosca antes de fazer o pedido."
 
     return {
@@ -95,91 +149,6 @@ def analisar_imagem(path_img: str, interna: bool):
     }, None
 
 
-# ================================
-# Rotas FastAPI
-# ================================
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return FileResponse("static/index.html")
-
-@app.post("/analisar")
-async def analisar(file: UploadFile = File(...), interna: str = Form("false")):
-    try:
-        is_interna = interna.strip().lower() in ["true", "1", "yes"]
-
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in [".png", ".jpg", ".jpeg"]:
-            ext = ".png"
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            tmp.write(await file.read())
-            temp_path = tmp.name
-
-        resp, erro = analisar_imagem(temp_path, is_interna)
-
-        if erro:
-            return JSONResponse({
-                "status": "falha",
-                "msg": erro,
-                "tipo_rosca": "Rosca interna (fêmea)" if is_interna else "Rosca externa (macho)",
-                "diametro_medido_mm": "0.00",
-                "bitola": "-",
-                "norma": "-",
-                "confianca": "0.0",
-                "observacao": erro,
-                "debug": resp["debug"] if resp else None
-            })
-
-        return JSONResponse({
-            "status": "ok",
-            **resp
-        })
-
-    except Exception as e:
-        logger.exception("💥 Erro no /analisar")
-        return JSONResponse({
-            "status": "erro",
-            "msg": f"💥 Erro inesperado: {str(e)}",
-            "tipo_rosca": "indefinida",
-            "diametro_medido_mm": "0.00",
-            "bitola": "-",
-            "norma": "-",
-            "confianca": "0.0",
-            "observacao": "Erro inesperado.",
-            "debug": None
-        }, status_code=500)
-
-@app.get("/healthz")
-def health_check():
-    return {"status": "ok"}
-
-@app.get("/termos", response_class=HTMLResponse)
-def termos_de_uso():
-    return (
-        "<html><head><meta charset='utf-8'><title>Termos de Uso</title></head><body>"
-        "<h2>Termos de Uso</h2>"
-        "<p>Este aplicativo estima o diâmetro e a possível norma de uma rosca (BSPP, BSPT, NPT, "
-        "UNC, UNF) a partir de uma foto, usando um cartão de referência para calcular a escala. "
-        "O resultado é uma estimativa gerada por processamento de imagem e inteligência artificial "
-        "e pode conter erros de medição decorrentes de ângulo de foto, iluminação, distância ou "
-        "qualidade da imagem.</p>"
-        "<p>Antes de comprar, fabricar ou instalar qualquer peça, confirme sempre a bitola com um "
-        "gabarito/pente de rosca físico ou com um profissional qualificado. O uso deste aplicativo "
-        "não substitui a verificação técnica da peça.</p>"
-        "</body></html>"
-    )
-
-@app.get("/privacidade", response_class=HTMLResponse)
-def politica_de_privacidade():
-    return (
-        "<html><head><meta charset='utf-8'><title>Política de Privacidade</title></head><body>"
-        "<h2>Política de Privacidade</h2>"
-        "<p>As fotos enviadas são usadas apenas para detectar e medir a rosca e o cartão de "
-        "referência na imagem, e para gerar a imagem de depuração exibida no resultado. Não "
-        "coletamos dados pessoais, não compartilhamos as imagens com terceiros e não as usamos "
-        "para nenhuma outra finalidade além de responder à sua solicitação de análise.</p>"
-        "</body></html>"
-    )
 # ================================
 # Rotas FastAPI
 # ================================
